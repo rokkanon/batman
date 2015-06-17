@@ -1,72 +1,115 @@
-from BeautifulSoup import BeautifulSoup, SoupStrainer
-import httplib2
+import sys
+from bs4 import BeautifulSoup
+import urllib2
+from urlparse import urlparse
 import Queue
+from collections import defaultdict
+import string
+from operator import itemgetter
 
-__author__ = 'tech'
+class Result:
+    def __init__(self, _text):
+        self.dict = defaultdict(int)
+        for i in [word.strip(string.punctuation) for word in _text.split()]:
+            if len(i) > 0 and not i.isdigit():
+                self.dict[i.lower()] += 1
+
+    def merge(self, _result):
+        for k in _result.dict.keys():
+            self.dict[k] += _result.dict[k]
+
+    def dump(self, _percentage):
+        items = self.dict.items()
+        qty = (len(items) / 100) * _percentage
+        for i in sorted(items, key=itemgetter(1), reverse=True):
+            print i
+            qty -= 1
+            if qty < 0:
+                break
 
 
-class response:
-    def __init(self, _response, _domain):
-        self.response = _response
-        self.domain = _domain # more flexible but may be need to be static
+class Node:
+    def __init__(self, _url, _level, _app):
+        if _url.startswith('/'):
+            self.url = _app.get_domain() + _url
+        else:
+            self.url = _url
+        self.level = _level
+        self.app = _app
+        self.soup = None
 
-        def get_text(self):
-            pass
+    def get_url(self):
+        return self.url
 
-        def is_right_domain():
-            pass
+    def get_result(self):
+        print("processing level: " + str(self.level) + " => " + self.url)
+        data = urllib2.urlopen(self.url)
+        html = data.read()
+        data.close()
 
-        def get_links():
-            for link in BeautifulSoup(response, parseOnlyThese=SoupStrainer('a')):
-                 if link.has_attr('href') and self.is_right_domain(link):
-                    yield link['href']
-class fetcher:
-    def __init__(self, _url, _top_n):
+        self.soup = BeautifulSoup(html)
+
+        for script in self.soup(["script", "style"]):
+            script.extract()
+
+        return Result(self.soup.get_text())
+
+
+    def get_level(self):
+        return self.level
+
+    def get_descendants(self):
+        if self.level < app.get_depth():
+            for links in self.soup.find_all('a'):
+                current = links.get('href')
+                if current is not None and not current.startswith('//') and \
+                   (current.startswith('/') or current.startswith(app.get_domain())):
+                    yield Node(current, self.level + 1, app)
+
+
+class Application:
+    def __init__(self, _url, _depth, _percentage):
         self.url = _url
-        self.top_n = _top_n
-        self.words2count = {}
+        self.depth = int(_depth)
+        self.percentage = int(_percentage)
+        parsed = urlparse(self.url)
+        self.domain = parsed.scheme + "://" + parsed.netloc
 
-    def process(self):
-        mapv = {} # need to be set - not time to lookup
+    def get_depth(self):
+        return self.depth
+
+    def get_domain(self):
+        return self.domain
+
+    def run(self):
+        s = set()
         q = Queue.Queue()
-        r = self.fetch_page()
-        q.put(r)
+        q.put(Node(self.url, 0, app))
 
-        level = 0
-        qty = 1
+        res = Result("")
+
         while not q.empty():
-            r = q.get()
-            self.process_text(r.get_text())
+            current = q.get()
 
-            qty = qty - 1
+            res.merge(current.get_result())
 
-            if qty is 0:
-                level = level + 1
+            for i in current.get_descendants():
+                if i.get_url() not in s:
+                    q.put(i)
+                    s.add(i.get_url())
 
-                if level is 3:
-                    break
+        res.dump(self.percentage)
 
-            for l in r.get_links():
-                if l is not in mapv:
-                    mapv.put(l, 1)
-                    r1 = self.fetch_page(self.link2url(l))
-                    q.put(r1)
-                    qty = qty + 1
+    @staticmethod
+    def usage():
+        print("usage " + sys.argv[0] + " url depth percentage")
+        print("for example " + sys.argv[0] + " www.wikipedia.com 3 5")
 
-        self.select_and_dump_topn()
+if __name__ == "__main__":
+    if len(sys.argv) is not 4:
+        Application.usage()
+    else:
+        app = Application(sys.argv[1], sys.argv[2], sys.argv[3])
+        app.run()
 
-    def process_test(self, text):
-        for word in self.split(text):
-            if word in self.words2count.keys():
-                self.words2count.put(word, 1)
-            else:
-                self.words2count.put(word, self.words2count.get(word) + 1) # there is much better way to do this
 
-    def select_and_dump_topn(self):
-        self.sort_by_value_and dump() # after result is dumped - interrupt sort
-
-    def fetch_page(self, url):
-        http = httplib2.Http()
-        status, resp = http.request(url)
-        # check status
-        return response(resp, "www.wikipedia.com")
